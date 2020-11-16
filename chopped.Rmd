@@ -274,7 +274,7 @@ Let's apply the concept to our data:
 
 ```{r featuretools , layout="l-body-outset"}
 # convert date to date time for correct time handling below
-chopped_plus_eda$air_date <- mdy_hms(paste0(chopped_pl$air_date, "20:00:00"))
+chopped_plus_eda$air_date <- mdy_hms(paste0(chopped_plus_eda$air_date, "20:00:00"))
 
 # first we have to create an entity, which is the building block of featuretools
 chopped_entity <- 
