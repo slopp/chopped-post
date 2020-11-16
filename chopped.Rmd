@@ -16,17 +16,17 @@ I recently discovered a popular set of Python packages for automated feature gen
 
 The core package is called `featuretools`, which generates automated features and is well suited to time series classification problems; e.g. "which customers will churn this month?" or "which wind turbine will fail next week?".
 
-I found their blogs a bit "markety" - they seem to be fond of coining terms that make relatively simple concepts like "write parameterized functions" sound fancy: "prediction engineering". But perhaps this coining is best interpreted as ML salesmanship? Anyway, I digress. The package had excellent reviews and had some serious engineering to ensure feature generation was scalable.
+I found their blogs a bit "markety" - they seem to be fond of coining terms that make relatively simple concepts like "write parameterized functions" sound fancy: "prediction engineering". But perhaps this coining is best interpreted as ML salesmanship? Either way, I digress. The package has excellent reviews and appears to be the real deal (read: supported and scalable).
 
-I found an excellent reticulate-based version of the package called featuretoolsR which gave me a great excuse to give the framework a spin. It was also a good excuse to explore a TidyTuesday dataset that I had my eye on for a long time.... Chopped reviews!
+In researching the Python package I found an excellent reticulate-based implementation in R called [`featuretoolsR`](https://github.com/magnusfurugard/featuretoolsR). Finding the R package inspired me to give the framework a spin. It was also a good excuse to explore a fun TidyTuesday dataset from earlier this year, [Chopped episode reviews](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-08-25/readme.md)!
 
-A post on feature engineering that uses data from a show built around ingredients... let the analogies and puns begin!
+> A post on feature engineering that uses data from a show built around ingredients... let the analogies and puns begin!
 
 As I played more with the data I ended up generating all kinds of features in a variety of different ways. This post explores the following:
 
-1. A time series regression problem: can we predict the next episode's rating based on prior episodes and data about the episode that may be revealed in a trailer?
+1. A time series regression problem: can we predict the next episode's rating? Spoiler: not really, the end models I created were not great.
 
-2. Feature engineering: features built manually, features from `recipes`, and features from `featuretoolsR`.
+2. Feature engineering: features built manually, features from `recipes`, and features from `featuretoolsR`. 
 
 ```{r setup}
 library(reticulate)
@@ -48,13 +48,13 @@ theme_set(theme_minimal())
 ```
 
 
-The chopped data consists of a time series (episodes aired on a certain date), episode ratings (the quantity to predict), and a variety of episode data  rich for generating features. 
+The Chopped data consists of a time series (episodes aired on a certain date), episode ratings (the quantity to predict), and a variety of episode data well suited to generating features. 
 
 ```{r peek-data, layout="l-body-outset"}
 paged_table(chopped_rating)
 ```
 
-To begin the exploratory analysis, I took a look at the ratings across shows (note I already removed any shows with no rating when I loaded the data):
+To begin the exploratory analysis, I took a look at the ratings across shows. (I removed any shows with no rating when I loaded the data).
 
 ```{r rating-dist, preview=TRUE}
 ggplot(chopped_rating) + 
@@ -65,15 +65,16 @@ ggplot(chopped_rating) +
     x = "Rating"
   )
 ```
+
 As expected, Chopped had generally stellar ratings!
 
 ## Features based on EDA
 
-Next, I wanted to take a look at some of the features in the data to continue the exploratory analysis to see if any attributes may have the potential to predict episode rating.
+Next, I wanted to take a look at some of the features in the data to continue the exploratory analysis and see if any attributes may have the potential to predict episode rating.
 
 ### EDA by Season
 
-One place to start is to see if episode rating was varied by season. Who knew Chopped has 43 seasons?!
+One place to start is to see if episode rating varied by season. Who knew Chopped has 43 seasons?!
 
 ```{r rating-by-season}
 chopped_season <- chopped_rating %>% 
@@ -89,11 +90,12 @@ chopped_rating %>%
   )
 
 ```
-In this case, it appears the ratings decreased gradually overtime, with the exception of the final few seasons which had much fewer episodes with rating data.
+
+In this case it appears the ratings decreased gradually overtime, with the exception of the final seasons which had much fewer episodes with rating data. It is possible that incorporating `season` into the model could help predict the episode rating.
 
 ### EDA by Judge
 
-I also wanted to look at ratings by judge. I have favorite judges afterall, maybe most people do?
+Next I looked at ratings by judge. I have favorite judges afterall, maybe most people do?
 
 ```{r rating-by-judge}
 by_judge <- chopped_rating %>% 
@@ -111,9 +113,9 @@ by_judge %>%
 
 This plot is a bit hard to read, but it does suggest a few things:
 
-1. There are some judges who have only done one episode. This observation makes "judge" a hard variable to use for predictions because there will singular values for certain factors and because never-before-seen values (new judges) will come up in test sets and out of sample predictions.
+1. There are some judges who have only done one episode. This observation makes "judge" a hard variable to use for predictions for two reasons. For existing data, many guest judges represent singular values, no predictive insight there. For out of sample data, it is likely we would see new judges we know nothing about, also not helpful for predictions.
 
-2. There may be differences between judges who have been on many episodes. Let's take a deeper look:
+2. There may be differences between the recurring judges who have been on many episodes. Let's take a deeper look:
 
 ```{r bucket-judges}
 influential_judges <- by_judge %>% 
@@ -130,19 +132,7 @@ by_judge %>%
 
 ```
 
-This plot suggests that the "recurring" judges all have ranges that are pretty similar (all the boxplots are overlapping), which means the specifics of a recurring judge may not be that predictive. But what if we compare episodes with recurring judges to episodes with "guest" judges?
-
-```{r guest-judges}
-by_judge %>% 
-  mutate(type = ifelse(value %in% influential_judges, "recurring", "guest")) %>% 
-  ungroup() %>% 
-  group_by(type) %>% 
-  ggplot(aes(type, episode_rating)) + 
-  geom_boxplot() + 
-  coord_flip()
-```
-
-Again, the boxplots mostly overlap. This makes sense, as the show almost always has a combo of recurring and guest judges. Overall, this suggests to me that the judges on a show might not be that predictive of episode rating. But if we did want to try and use judge as some sort of predictive feature, the most variability appears to exist between recurring judges. 
+This plot suggests that the "recurring" judges all have ranges that are pretty similar (all the boxplots are overlapping), which means the specifics of a recurring judge may not be that predictive. However something may be better than nothing, so I figured it would be worthwhile to add judges as a feature. How? One approach is create a set of dummy variables representing the recurring judges on each show:
 
 ```{r encode-judges}
 encode_judge <- function(judges) {
@@ -155,6 +145,11 @@ encode_judge <- function(judges) {
     mutate(in_episode = judge %in% judges) %>% 
     pivot_wider(names_from = judge, values_from = in_episode)
 }
+
+chopped_rating[1:10,] %>%
+  rowwise() %>% 
+  mutate(encode_judge(c_across(starts_with("judge")))) %>% 
+  paged_table()
 ```
 
 One thing to note about this approach; we essentially had to run a "forward pass" across all of our data to compute the list of influential judges. The encoding then uses that fixed list. While this approach works, it is also risky because future data might drift - the judges might stop judging and new judges (not encoded here) could become part of the data! A similar problem occurs whenever you are training factors on data where new factors could potentially come into play. 
@@ -165,14 +160,15 @@ This encoding function creates dummy variables across all the possible influenti
 
 There are a few variables in our data that are quite wordy. We may want to take, for instance, the episode notes and create a sentiment score (did something bad happen in highly rated episodes?). Or we could try to extract entities like title or location from the contestant info. Or we could play with the ingredients, for instance, to see if a particular ingredient was most often associated with high ratings. So many options!
 
-The `_info` fields for each contestant contain free text information about the contestants:
+I decided to start with `_info` fields, which contain free text information about the contestants:
 
 ```{r peek-info , layout="l-body-outset"}
 chopped_rating %>% 
   select(ends_with('info')) %>% 
   paged_table()
 ```
-Some of this information may be interesting for the model, but it is unlikely that the free form fields themselves will be useful. The info appears to commonly include location and title. These two bits can be extracted in a NLP process called entity extraction. Think NLP entity extraction as a magic `mutate` call that is going to take free form text and pull out location (and maybe title... though that is a bit of a long shot.)
+
+Some of this information may be interesting for the model, but it is unlikely that the free form fields themselves will be useful. The info appears to commonly include location and title. These two bits can be extracted in a NLP process called entity extraction. Think of NLP entity extraction as a magic `mutate` call that can take free form text and pull out values of interest such locations.
 
 ```{r peek-entities , layout="l-body-outset"}
 library(spacyr)
@@ -220,6 +216,12 @@ encode_cities <- function(chefs_info){
       )
     return(results)
 }
+
+chopped_rating[1:10,] %>%
+  # pull out cities
+  rowwise() %>% 
+  mutate(encode_cities(c_across(ends_with("info")))) %>% 
+  paged_table()
 ```
 
 ### EDA Sentiment
@@ -260,9 +262,9 @@ chopped_plus_eda <- chopped_with_sentiments %>%
 
 Our next step is do some automated feature generation using featuretools!
 
-The package is designed to help automate feature creation through a process called "deep feature synthesis". In my opinion this title is a like "DAG", it is a name designed to make a pretty simple concept sound fancy. The core idea in featuretools is that you can take primitive operations to create new features,  and then sometimes you can combine those operations to create even more new features. 
+The package is designed to help automate feature creation through a process called "deep feature synthesis". In my opinion this title is designed to make a pretty simple concept sound fancy. The core idea in featuretools is that you can take primitive operations to create new features, and then sometimes you can combine those operations to create even more new features. 
 
-For example, in our chopped data set you could take primitives like "week_day" and "mode" to generate a number of new feature columns: `week_day(air_episode)`, `mode(season_rating)`, and then combinations like: `mode(week_day(air_episode))`. 
+For example, in our Chopped data set you could take primitives like "week_day" and "mode" to generate a number of new feature columns: `week_day(episode)`, `mode(season_rating)`, and then combinations like: `mode(week_day(episode))`. 
 
 There are two types of primitives, "transform" and "aggregation". For tidyverse fans, an easy way to understand the difference is to think of the dplyr functions `mutate` and `summarize`. Transform primitives are functions that fit within a `mutate`; they return one value for each row. Aggregation primitives, on the other hand, require some type of grouping. They are the equivalent of a `summarize` function. So, in our example above, which type is `week_day` and `mode`? 
 
@@ -282,7 +284,7 @@ chopped_entity <-
     chopped_plus_eda,
     index = "series_episode",
     time_index = "air_date",
-    entity_id = "chopped"
+    entity_id = "Chopped"
   )
 
 # next we have to teach featuretools about the relationship between 
@@ -299,7 +301,7 @@ chopped_entity <- chopped_entity %>%
   ) %>% 
   add_relationship(
     parent_set = "seasons",
-    child_set = "chopped",
+    child_set = "Chopped",
     parent_idx = "season",
     child_idx = "season"
   )
@@ -316,7 +318,7 @@ cutoff_times <- chopped_plus_eda %>%
 # now we perform the automatic feature generation
 chopped_new_features_entity <- chopped_entity %>%
   dfs(
-    target_entity = "chopped", 
+    target_entity = "Chopped", 
     trans_primitives = c("year",
                          "time_since_previous", 
                          "num_characters", 
@@ -335,7 +337,7 @@ chopped_new_features_entity <- chopped_entity %>%
     # be sure to ignore the episode_rating since that is our target
     # we don't want it leaking into the generated features
     # also ignore some variables we don't want to use for feature generation
-    ignore_variables = list(chopped = list("episode_rating",
+    ignore_variables = list(Chopped = list("episode_rating",
                                            "contestant1",
                                            "contestant2",
                                            "contestant3",
@@ -369,7 +371,7 @@ We created many new features, and then combinations of those features! Will thes
 
 Now that we have our giant set of features we are ready to create a recipe and do some modeling. For fun, we can even create a few more features along the way...
 
-One critical bit as we build our recipe is to keep in mind the time element; just like in our automated feature engineering, we need to be sure we don't leak data. We also have to be careful about time when we make our test/training split - we wouldn't want to accidentally train on the future and test on the past!
+One critical bit as we build our recipe is to keep in mind the time element; just like in our automated feature engineering we need to be sure we don't leak data. We also have to be careful about time when we make our test/training split - we wouldn't want to accidentally train on the future and test on the past!
 
 ```{r build-recipe}
 library(timetk)
@@ -394,7 +396,7 @@ chopped_all %>%
   select(season, season_episode, series_episode, air_date, episode_name) %>% 
   paged_table()
 ```
-Essentially there appeared to be overlap between the beginning of one season and the end of another. This makes sense, because there are 43 seasons over the course of only 11 years. We can look at some of the details:
+Essentially there appears to be overlap between the beginning of one season and the end of another. This makes sense, because there are 43 seasons over the course of only 11 years. We can look at some of the details:
 
 ```{r time_mismatch , layout="l-body-outset"}
 out_of_order = 0
@@ -413,9 +415,9 @@ chopped_all %>%
   paged_table()
 ```
 
-Total out of order is `r out_of_order`. This change makes sense, but it means that in order to avoid "leaking" data about the future, we need to arrange by `air_date` when making test and training splits. 
+Total out of order is `r out_of_order`. While surprising, I realized this out of order index didn't make a huge difference, it just meant in order to avoid "leaking" data about the future, we would need to arrange by `air_date` when making test and training splits. 
 
-Note to future self: don't take time and monotonically increasing indexes for granted!
+> Note to future self: don't take time and monotonically increasing indexes for granted!
 
 Returning to the recipe and model fitting:
 
@@ -455,7 +457,12 @@ chopped_rec <-
                   levels = as.character(1:43)) %>% 
   step_num2factor(season_episode, 
                   ordered = TRUE, 
-                  levels = as.character(1:20))  %>% 
+                  levels = as.character(1:20))  %>%
+  # this is a really important step
+  # it helps our model handle cases where new cities in the test data
+  # don't "surprise" the model, by assigning them automatically to a 
+  # factor called "other"
+  # it also assigns any cities that appear < 3 times to "other"
   step_other(all_nominal(), -season, -season_episode, threshold = 3) %>% 
   step_normalize(all_numeric(), -episode_rating) %>% 
   step_meanimpute(all_numeric(), -season_episode) %>% 
@@ -507,14 +514,18 @@ ggplot(test_res, aes(.pred, `...2`)) +
   )
 ```
 
-Feature importance for tree models give a sense for which of the many features are making the biggest impact in the model.
+The results are bleak. While our model performs really well on the training data, it performs poorly on the test data. This behavior could be for a few reasons. I am suspicious we may be over-fitting based on our over-abundance of inputs relative to our training data. There may also be structural changes between our training data (early seasons) and our test data (later seasons). I also didn't tune the model or think much about model structure! 
+
+It is always risky to assume more ingredients make for a better meal!
+
+Model performance aside, we can use feature importance for tree models to get a sense for which of the many features are making the biggest impact in the model.
 
 ```{r}
 library(vip)
 vip::vip(mod_fit)
 ```
 
-Looks like our auto-generated features came in handy, along with some of the EDA based work! As expected, the hard work we did on extracting judges didn't help the model much, wheras season and air date did! The model also gleaned something from the ingredient lists and sentiment data, but not much from our hard work extracting city entities!
+Looks like our auto-generated features came in handy, along with some of the EDA based work. As expected, the hard work we did extracting judges didn't help the model much, whereas the features we got for free (season and air date) were important. The model did use our sentiment data, but didn't do much with extracted cities. Interestingly, it appears both appetizers, entree, and dessert columns were useful thanks to our auto-generated features!
 
 What if the model only used features available in the original data set?
 
@@ -539,6 +550,7 @@ test_less_res <-
 test_less_res %>% 
   metrics(.pred, `...2`)
 ```
+
 The less complicated model doesn't perform as well as the original model, but it does perform in the same ball park; a rmse of 0.62 vs 0.58 for the significantly more complicated model. Is the complexity worth it? In this case, most likely not. Perhaps the lesson here is that model fitting really is like cooking on Chopped - keep things simple, focus on your main ingredients, and then execute.
 
 ## Notes on Production Pipelines
